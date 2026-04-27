@@ -4,6 +4,7 @@ use ratatui::widgets::ListState;
 
 pub struct App {
     pub current_path: PathBuf,
+    pub root_path: PathBuf,
     pub entries: Vec<DirEntry>,
     pub list_state: ListState,
 }
@@ -16,6 +17,7 @@ impl App {
 
         App {
             current_path: PathBuf::from(path),
+            root_path: PathBuf::from(path),
             entries,
             list_state,
         }
@@ -24,7 +26,7 @@ impl App {
     pub fn navigate_into(&mut self) {
         if let Some(i) = self.list_state.selected() {
             let selected = &self.entries[i];
-            if selected.path.is_dir() {
+            if selected.is_dir {
                 self.current_path = selected.path.clone();
                 self.entries = crate::fs::scan_dir(self.current_path.to_str().unwrap());
                 self.list_state.select(Some(0));
@@ -33,6 +35,9 @@ impl App {
     }
 
     pub fn navigate_back(&mut self) {
+        if self.current_path == self.root_path {
+            return;
+        }
         if let Some(parent) = self.current_path.parent() {
             self.current_path = parent.to_path_buf();
             self.entries = crate::fs::scan_dir(self.current_path.to_str().unwrap());
@@ -50,7 +55,7 @@ impl App {
 
     pub fn move_down(&mut self) {
         let i = match self.list_state.selected() {
-            Some(i) => if i == self.entries.len() - 1 { 0 } else { i + 1 },
+            Some(i) => if i >= self.entries.len() - 1 { 0 } else { i + 1 },
             None => 0,
         };
         self.list_state.select(Some(i));
