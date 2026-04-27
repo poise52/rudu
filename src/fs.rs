@@ -1,6 +1,7 @@
 use rayon::prelude::*;
 use std::path::PathBuf;
 use std::fs;
+use std::os::unix::fs::MetadataExt;
 
 pub struct DirEntry {
     pub path: PathBuf,
@@ -26,7 +27,9 @@ pub fn scan_dir(path: &str) -> Vec<DirEntry> {
             let size = if is_dir {
                 get_size(path)
             } else {
-                fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+                fs::metadata(path)
+                    .map(|m| m.blocks() * 512)
+                    .unwrap_or(0)
             };
             DirEntry {
                 path: path.clone(),
@@ -42,10 +45,11 @@ pub fn scan_dir(path: &str) -> Vec<DirEntry> {
 
 fn get_size(path: &PathBuf) -> u64 {
     walkdir::WalkDir::new(path)
+        .same_file_system(true)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter_map(|e| e.metadata().ok())
         .filter(|m| m.is_file())
-        .map(|m| m.len())
+        .map(|m| m.blocks() * 512)
         .sum()
 }

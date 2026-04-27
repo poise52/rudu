@@ -12,6 +12,18 @@ use ratatui::{
 };
 use std::io;
 
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1024 * 1024 * 1024 {
+        format!("{:.1} GiB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if bytes >= 1024 * 1024 {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
 pub fn run(app: &mut App) -> io::Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -37,9 +49,8 @@ pub fn run(app: &mut App) -> io::Result<()> {
                     let name = e.path.file_name()
                         .unwrap_or_default()
                         .to_string_lossy();
-                    let size_mb = e.size / 1024 / 1024;
                     let icon = if e.is_dir { "📁" } else { "📄" };
-                    ListItem::new(format!("{} {:<40} {} MB", icon, name, size_mb))
+                    ListItem::new(format!("{} {:<40} {:>12}", icon, name, format_size(e.size)))
                 })
                 .collect();
 
