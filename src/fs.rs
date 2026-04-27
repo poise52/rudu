@@ -2,6 +2,7 @@ use rayon::prelude::*;
 use std::path::PathBuf;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
+use crossbeam_channel::Sender;
 
 pub struct DirEntry {
     pub path: PathBuf,
@@ -41,6 +42,13 @@ pub fn scan_dir(path: &str) -> Vec<DirEntry> {
 
     entries.sort_by(|a, b| b.size.cmp(&a.size));
     entries
+}
+
+pub fn scan_dir_async(path: PathBuf, tx: Sender<Vec<DirEntry>>) {
+    std::thread::spawn(move || {
+        let entries = scan_dir(path.to_str().unwrap_or(""));
+        let _ = tx.send(entries);
+    });
 }
 
 fn get_size(path: &PathBuf) -> u64 {

@@ -1,4 +1,4 @@
-use crate::app::App;
+use crate::app::{App, ScanState};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
@@ -11,6 +11,9 @@ use ratatui::{
     Terminal,
 };
 use std::io;
+use std::time::Duration;
+
+const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 fn format_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 * 1024 {
@@ -32,14 +35,26 @@ pub fn run(app: &mut App) -> io::Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     loop {
+        app.tick();
+
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(3), Constraint::Percentage(100)])
                 .split(f.area());
 
+            let title = match app.scan_state {
+                ScanState::Scanning => {
+                    let spinner = SPINNER[app.spinner_tick as usize % SPINNER.len()];
+                    format!(" {} scanning {}... ", spinner, app.current_path.to_str().unwrap_or(""))
+                }
+                ScanState::Done => {
+                    format!(" {} ", app.current_path.to_str().unwrap_or(""))
+                }
+            };
+
             let path_block = Block::default()
-                .title(app.current_path.to_str().unwrap_or(""))
+                .title(title)
                 .borders(Borders::ALL);
             f.render_widget(path_block, chunks[0]);
 
@@ -55,20 +70,22 @@ pub fn run(app: &mut App) -> io::Result<()> {
                 .collect();
 
             let list = List::new(items)
-                .block(Block::default().title("duwatch").borders(Borders::ALL))
+                .block(Block::default().title("rudu").borders(Borders::ALL))
                 .highlight_symbol(">> ");
 
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
         })?;
 
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Up => app.move_up(),
-                KeyCode::Down => app.move_down(),
-                KeyCode::Enter => app.navigate_into(),
-                KeyCode::Backspace => app.navigate_back(),
-                _ => {}
+        if event::poll(Duration::from_millis(100))? {
+            if let Event::Key(key) = event::read()? {
+                match key.code {
+                    KeyCode::Char('q') => break,
+                    KeyCode::Up => app.move_up(),
+                    KeyCode::Down => app.move_down(),
+                    KeyCode::Enter => app.navigate_into(),
+                    KeyCode::Backspace => app.navigate_back(),
+                    _ => {}
+                }
             }
         }
     }
