@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "Terminal disk usage browser write on Rust (ncdu-style)"
 license = "MIT"
+readme = "README.md"
 repository = "https://github.com/poise52/rudu"
 
 [dependencies]
