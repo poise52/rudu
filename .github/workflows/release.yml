@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Build (Apple Silicon)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Build (Intel Mac)
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Pack archives
+        run: |
+          set -e
+          VERSION="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          tar -czf "dist/rudu-${VERSION}-macos-aarch64.tar.gz" \
+            -C target/aarch64-apple-darwin/release rudu
+          tar -czf "dist/rudu-${VERSION}-macos-x86_64.tar.gz" \
+            -C target/x86_64-apple-darwin/release rudu
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true

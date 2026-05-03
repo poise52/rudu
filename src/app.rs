@@ -2,7 +2,7 @@ use crate::fs::{build_index_async, list_dir, DirEntry, SizeIndex};
 use crossbeam_channel::{unbounded, Receiver};
 use ratatui::widgets::ListState;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(PartialEq)]
 pub enum ScanState {
@@ -22,8 +22,9 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(path: &str) -> App {
-        let root_path = fs::canonicalize(path).unwrap_or_else(|_| PathBuf::from(path));
+    pub fn new(path: impl AsRef<Path>) -> App {
+        let path = path.as_ref();
+        let root_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let (tx, rx) = unbounded();
         build_index_async(root_path.clone(), tx);
 
