@@ -1,4 +1,5 @@
 use crossbeam_channel::Sender;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -13,54 +14,71 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
-/// One pass over all files under `root`: each directory path maps to total allocated size
-/// (blocks × 512) of all files in its subtree, matching prior per-file semantics.
 pub fn build_size_index(root: PathBuf) -> HashMap<PathBuf, u64> {
-    let root = fs::canonicalize(&root).unwrap_or(root);
-    let mut map = HashMap::new();
+    let root = match fs::canonicalize(&root) {
+        Ok(p) => p,
+        Err(_) => root,
+    };
+    let root_dev = fs::metadata(&root).map(|m| m.dev()).unwrap_or(0);
+    let (sizes, _) = scan_tree_parallel(root.as_path(), root_dev);
+    sizes
+}
 
-    let walker = walkdir::WalkDir::new(&root)
-        .same_file_system(true)
-        .into_iter()
-        .filter_map(|e| e.ok());
+fn scan_tree_parallel(path: &Path, root_dev: u64) -> (HashMap<PathBuf, u64>, u64) {
+    let read = match fs::read_dir(path) {
+        Ok(r) => r,
+        Err(_) => {
+            let mut m = HashMap::new();
+            m.insert(path.to_path_buf(), 0);
+            return (m, 0);
+        }
+    };
 
-    for entry in walker {
-        let path = entry.path();
+    let mut files_total = 0u64;
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut cross_fs: Vec<PathBuf> = Vec::new();
+
+    for entry in read.flatten() {
         let Ok(meta) = entry.metadata() else {
             continue;
         };
-        if !meta.is_file() {
-            continue;
+        let p = entry.path();
+        if meta.is_file() {
+            files_total += meta.blocks() * 512;
+        } else if meta.is_dir() {
+            if meta.dev() == root_dev {
+                dirs.push(p);
+            } else {
+                cross_fs.push(p);
+            }
         }
-        let size = meta.blocks() * 512;
-        add_size_to_ancestors(&mut map, root.as_path(), path, size);
     }
 
-    map
-}
+    let mut sizes = HashMap::new();
+    let mut total = files_total;
 
-fn add_size_to_ancestors(
-    map: &mut HashMap<PathBuf, u64>,
-    root: &Path,
-    file_path: &Path,
-    size: u64,
-) {
-    let Some(mut dir) = file_path.parent().map(Path::to_path_buf) else {
-        return;
-    };
-    loop {
-        if !dir.starts_with(root) {
-            break;
+    if dirs.len() > 1 {
+        let parts: Vec<(HashMap<PathBuf, u64>, u64)> = dirs
+            .par_iter()
+            .map(|d| scan_tree_parallel(d.as_path(), root_dev))
+            .collect();
+        for (sub, t) in parts {
+            sizes.extend(sub);
+            total += t;
         }
-        *map.entry(dir.clone()).or_insert(0) += size;
-        if dir.as_path() == root {
-            break;
+    } else {
+        for d in dirs {
+            let (sub, t) = scan_tree_parallel(&d, root_dev);
+            sizes.extend(sub);
+            total += t;
         }
-        let Some(parent) = dir.parent() else {
-            break;
-        };
-        dir = parent.to_path_buf();
     }
+
+    for p in cross_fs {
+        sizes.insert(p, 0);
+    }
+    sizes.insert(path.to_path_buf(), total);
+    (sizes, total)
 }
 
 pub fn list_dir(sizes: &HashMap<PathBuf, u64>, dir: &Path) -> Vec<DirEntry> {
@@ -73,7 +91,7 @@ pub fn list_dir(sizes: &HashMap<PathBuf, u64>, dir: &Path) -> Vec<DirEntry> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let path = e.path();
-            let meta = fs::metadata(&path).ok()?;
+            let meta = e.metadata().ok()?;
             let is_dir = meta.is_dir();
             let size = if is_dir {
                 sizes.get(&path).copied().unwrap_or(0)
