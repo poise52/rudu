@@ -6,8 +6,10 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
-    widgets::{Block, Borders, List, ListItem},
+    layout::{Alignment, Constraint, Direction, Layout},
+    style::{Color, Style},
+    text::Line,
+    widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
 use std::io;
@@ -40,7 +42,11 @@ pub fn run(app: &mut App) -> io::Result<()> {
         terminal.draw(|f| {
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Length(3), Constraint::Percentage(100)])
+                .constraints([
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(3),
+                ])
                 .split(f.area());
 
             let title = match app.scan_state {
@@ -74,6 +80,19 @@ pub fn run(app: &mut App) -> io::Result<()> {
                 .highlight_symbol(">> ");
 
             f.render_stateful_widget(list, chunks[1], &mut app.list_state);
+
+            let hints = Paragraph::new(Line::from(
+                "↑↓ выбор  ·  Enter — в папку  ·  Backspace — назад  ·  r — обновить  ·  q — выход",
+            ))
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Center)
+            .block(
+                Block::default()
+                    .title(" клавиши ")
+                    .title_alignment(Alignment::Center)
+                    .borders(Borders::ALL),
+            );
+            f.render_widget(hints, chunks[2]);
         })?;
 
         if event::poll(Duration::from_millis(100))? {
