@@ -84,6 +84,7 @@ pub fn run(app: &mut App) -> io::Result<()> {
                     KeyCode::Down => app.move_down(),
                     KeyCode::Enter => app.navigate_into(),
                     KeyCode::Backspace => app.navigate_back(),
+                    KeyCode::Char('r') => app.refresh_scan(),
                     _ => {}
                 }
             }

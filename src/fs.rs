@@ -1,8 +1,11 @@
-use rayon::prelude::*;
-use std::path::PathBuf;
+use crossbeam_channel::Sender;
+use std::collections::HashMap;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use crossbeam_channel::Sender;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub type SizeIndex = Arc<HashMap<PathBuf, u64>>;
 
 pub struct DirEntry {
     pub path: PathBuf,
@@ -10,33 +13,78 @@ pub struct DirEntry {
     pub is_dir: bool,
 }
 
-pub fn scan_dir(path: &str) -> Vec<DirEntry> {
-    let read = match fs::read_dir(path) {
+/// One pass over all files under `root`: each directory path maps to total allocated size
+/// (blocks × 512) of all files in its subtree, matching prior per-file semantics.
+pub fn build_size_index(root: PathBuf) -> HashMap<PathBuf, u64> {
+    let root = fs::canonicalize(&root).unwrap_or(root);
+    let mut map = HashMap::new();
+
+    let walker = walkdir::WalkDir::new(&root)
+        .same_file_system(true)
+        .into_iter()
+        .filter_map(|e| e.ok());
+
+    for entry in walker {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        if !meta.is_file() {
+            continue;
+        }
+        let size = meta.blocks() * 512;
+        add_size_to_ancestors(&mut map, root.as_path(), path, size);
+    }
+
+    map
+}
+
+fn add_size_to_ancestors(
+    map: &mut HashMap<PathBuf, u64>,
+    root: &Path,
+    file_path: &Path,
+    size: u64,
+) {
+    let Some(mut dir) = file_path.parent().map(Path::to_path_buf) else {
+        return;
+    };
+    loop {
+        if !dir.starts_with(root) {
+            break;
+        }
+        *map.entry(dir.clone()).or_insert(0) += size;
+        if dir.as_path() == root {
+            break;
+        }
+        let Some(parent) = dir.parent() else {
+            break;
+        };
+        dir = parent.to_path_buf();
+    }
+}
+
+pub fn list_dir(sizes: &HashMap<PathBuf, u64>, dir: &Path) -> Vec<DirEntry> {
+    let read = match fs::read_dir(dir) {
         Ok(r) => r,
         Err(_) => return vec![],
     };
 
-    let paths: Vec<PathBuf> = read
+    let mut entries: Vec<DirEntry> = read
         .filter_map(|e| e.ok())
-        .map(|e| e.path())
-        .collect();
-
-    let mut entries: Vec<DirEntry> = paths
-        .par_iter()
-        .map(|path| {
-            let is_dir = path.is_dir();
+        .filter_map(|e| {
+            let path = e.path();
+            let meta = fs::metadata(&path).ok()?;
+            let is_dir = meta.is_dir();
             let size = if is_dir {
-                get_size(path)
+                sizes.get(&path).copied().unwrap_or(0)
             } else {
-                fs::metadata(path)
-                    .map(|m| m.blocks() * 512)
-                    .unwrap_or(0)
+                meta.blocks() * 512
             };
-            DirEntry {
-                path: path.clone(),
+            Some(DirEntry {
+                path,
                 size,
                 is_dir,
-            }
+            })
         })
         .collect();
 
@@ -44,20 +92,9 @@ pub fn scan_dir(path: &str) -> Vec<DirEntry> {
     entries
 }
 
-pub fn scan_dir_async(path: PathBuf, tx: Sender<Vec<DirEntry>>) {
+pub fn build_index_async(root: PathBuf, tx: Sender<SizeIndex>) {
     std::thread::spawn(move || {
-        let entries = scan_dir(path.to_str().unwrap_or(""));
-        let _ = tx.send(entries);
+        let map = build_size_index(root);
+        let _ = tx.send(Arc::new(map));
     });
-}
-
-fn get_size(path: &PathBuf) -> u64 {
-    walkdir::WalkDir::new(path)
-        .same_file_system(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .filter_map(|e| e.metadata().ok())
-        .filter(|m| m.is_file())
-        .map(|m| m.blocks() * 512)
-        .sum()
 }
